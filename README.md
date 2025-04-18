@@ -4,13 +4,11 @@ Skull is a language with a suite:
 Graveyard: LSC Manager
 LSC: Skull Lang Compiler
 ```
-
 ## LSC
 LSC stands for Lazy's Skull Compiler, it compiles skull files into x86_64 assembly.
 
 ## Graveyard
 Graveyard is a LSC compiler, but you can also with Graveyard install LSC to /usr/bin for systemwide use
-
 
 # Usage
 
