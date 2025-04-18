@@ -59,14 +59,14 @@ Options:
 
 ## How to compile Skull with LSC
 
+Outputs to "main" executable
+```bash
+lsc <filename.k>
+```
+
 Explicitly name the output
 ```bash
 lsc <filename.k> -o <output>
-```
-
-Implicitly becomes main
-```bash
-lsc <filename.k>
 ```
 
 Keeps .o and .asm file from being deleted, this allows me to debug and you to see the inner workings :D
