@@ -21,8 +21,9 @@ char* asm_f_compound(ast_t* ast) {
     for (int i = 0; i < (int) ast->children->size; i++) {
         ast_t* child_ast = (ast_t*) ast->children->items[i];
         char* next_value = asm_f(child_ast);
-        value = realloc(value, (strlen(next_value) + 1) * sizeof(char));
-        strcpy(value, next_value);
+        value = realloc(value, (strlen(value) + strlen(next_value) + 1) * sizeof(char));
+        strcat(value, next_value);
+        free(next_value);  // Free the memory allocated by asm_f
     }
 
     return value;
@@ -30,7 +31,7 @@ char* asm_f_compound(ast_t* ast) {
 
 char* asm_f_assignment(ast_t* ast) {
     char* s = calloc(1, sizeof(char));
-    if (ast->value->type == AST_FUNCTION) {
+    if (ast->value && ast->value->type == AST_FUNCTION) {
         const char* template = ".global %s\n%s:\n";
         s = realloc(s, (strlen(template) + (strlen(ast->name) * 2) + 1) * sizeof(char));
         sprintf(s, template, ast->name, ast->name);
@@ -40,19 +41,26 @@ char* asm_f_assignment(ast_t* ast) {
         char* as_val_val = asm_f(as_val->value);
         s = realloc(s, (strlen(s) + strlen(as_val_val) + 1) * sizeof(char));
         strcat(s, as_val_val);
+        free(as_val_val);  // Free the memory allocated by asm_f
     }
     return s;
 }
 
-char* asm_f_variable(ast_t* ast) {}
+char* asm_f_variable(ast_t* ast) {
+    return strdup("");
+}
 
 char* asm_f_call(ast_t* ast) {
     if (strcmp(ast->name, "return") == 0) {
-
+        
     }
+
+    return strdup("");
 }
 
-char* asm_f_int(ast_t* ast) {}
+char* asm_f_int(ast_t* ast) {
+    return strdup("");
+}
 
 char* asm_f(ast_t* ast) {
     char* value = calloc(1, sizeof(char));
