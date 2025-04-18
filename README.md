@@ -10,8 +10,8 @@ Lazy's Skull Compiler (lsc) - Usage Information
 ---------------------------------------------
 Usage: Gravyard { install, uninstall, reinstall, usage }
     Available Targets:
-    install   : Build and install lsc to $USER_BIN
-    uninstall : Remove build artifacts and lsc from $USER_BIN
+    install   : Build and install lsc to /usr/bin
+    uninstall : Remove build artifacts and lsc from /usr/bin
     reinstall : Reinstall lsc
     usage     : Display this help message
 ```
