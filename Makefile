@@ -27,7 +27,7 @@ $(BUILD):
 
 # Linking rule
 $(EXEC): $(OBJS) $(ASM_OBJS)
-	gcc $^ $(LDFLAGS) -o $(BUILD)/$(EXEC)
+	gcc $^ $(LDFLAGS) -o $(EXEC)
 
 # Pattern rule for C object files
 $(BUILD)/%.o: src/%.c | $(BUILD)
@@ -39,6 +39,6 @@ $(BUILD)/%.o: %.asm | $(BUILD)
 
 # Clean up
 clean:
-	rm -rf $(BUILD_OBJS) $(EXEC) $(ASM_OBJS) $(ASM_SRCS)
+	rm -rf $(BUILD_OBJS) $(BUILD) $(EXEC) $(ASM_OBJS) $(ASM_SRCS)
 
 .PHONY: all clean
