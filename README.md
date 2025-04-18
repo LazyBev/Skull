@@ -1,9 +1,9 @@
 # Skull
 Skull is a language with a suite:
-```bash
-Graveyard: LSC Manager
-LSC: Skull Lang Compiler
-```
+
+Graveyard: LSC Manager  
+LSC: Skull Lang Compiler  
+
 ## LSC
 LSC stands for Lazy's Skull Compiler, it compiles skull files into x86_64 assembly.
 
