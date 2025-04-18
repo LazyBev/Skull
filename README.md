@@ -16,8 +16,7 @@ Graveyard is a LSC compiler, but you can also with Graveyard install LSC to /usr
 -----------------------------------------------------------------------------
 
 Usage: Graveyard <Target>
-                  diff          : Checks for any diffs in bytes between the Installed Graveyard
-                                                                                  and the Graveyard in the Skull dir
+                  diff          : Checks for any diffs in bytes between the Installed Graveyard and the Graveyard in the Skull dir
                   resurrect     : Installs Graveyard to /usr/bin and Updates
                   lsc-compile   : Compiles LSC to a binary
                   lsc-remove    : Deletes the compiled LSC binary and its build artifacts
