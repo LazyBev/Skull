@@ -71,7 +71,7 @@ char* asm_f_call(ast_t* ast) {
                 return_value = ast->value->int_value;
             }
         }
-        const char* template = "    mov eax, %d\n"    
+        const char* template = "    mov rax, %d\n"    
                                "    leave\n"
                                "    ret\n";
         char* ret_s = calloc(strlen(template) + 128, sizeof(char));
@@ -82,6 +82,7 @@ char* asm_f_call(ast_t* ast) {
     }
 
     return s;
+} s;
 }
 
 char* asm_f_int(ast_t* ast) {
@@ -93,9 +94,6 @@ char* asm_f_root(ast_t* ast) {
                                "global _start\n"
                                "_start:\n"
                                "    call main\n"
-                               "    mov ebx, eax\n"  
-                               "    mov eax, 1\n"    
-                               "    int 0x80\n\n";
     char* value = (char *) calloc((strlen(section_text) + 128), sizeof(char));
     strcpy(value, section_text);
 
