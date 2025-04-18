@@ -32,7 +32,7 @@ Targets:
 
 ## How to compile LSC with Graveyard
 
-This line *Installs/Updates* **LSC**
+This line *Installs/Updates* **Graveyard**
 ```bash
 graveyard resurrect
 ```
