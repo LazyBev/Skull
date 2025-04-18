@@ -19,7 +19,7 @@ Usage: Graveyard <Target>
                   diff          : Checks for a diff in bytes between Installed Graveyard and Graveyard in Skull
                   resurrect     : Installs Graveyard to /usr/bin and Updates
                   lsc-compile   : Compiles LSC to a binary
-                  lsc-remove    : Deletes the compiled LSC binary and it's build artifact's
+                  lsc-remove    : Deletes the compiled LSC binary and its build artifacts
                   lsc-recompile : Recompiles LSC (Alternative: Graveyard lsc-remove && Graveyard lsc-compile)
                   lsc-install   : Compiles LSC and installs to /usr/bin
                   lsc-uninstall : Uninstalls LSC from /usr/bin
