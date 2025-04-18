@@ -1,13 +1,16 @@
 # Skull
-A programming language that uses lsc (Lazy's Skull Compiler (Written in C)) that compiles file to x86_64 assembly
+A programming language that uses LSC
 
-# How to install Skull
-Use Graveyard to install lsc (Lazy's Skull Compiler)
+## LSC
+LSC stands for Lazy's Skull Compiler, it compiles skull into x86_64 assembly.
 
-# Graveyard
-A lsc builder 
+### How to Use LSC
+Use Graveyard to compile LSC
 
-## Gravyard usage
+## Graveyard
+Graveyard is a LSC compiler, but you can also with Graveyard install LSC to /usr/bin for systemwide use
+
+### Gravyard usage
 ```
                         Graveyard - Usage Information                        
 -----------------------------------------------------------------------------
@@ -22,4 +25,13 @@ Usage: Graveyard <Target>
                   lsc-uninstall : Uninstalls LSC from /usr/bin
                   lsc-reinstall : Reinstalls LSC (Alternative: Graveyard lsc-uninstall && Graveyard lsc-install)
                   usage         : Display this help message
+```
+
+# How to compile Skull with LSC
+```bash
+lsc <filename.k> -o <output> // Explicitly name the output
+lsc <filename.k> // Implicitly becomes main
+lsc <filename.k> -k // Keeps .o and .asm file from being deleted, this allows me to debug and you to see the inner workings :D
+lsc <filename.k> -o <output> -k // Combine them
+lsc <filename.k> -k -o <output> // Even like this
 ```
