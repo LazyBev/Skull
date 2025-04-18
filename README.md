@@ -58,10 +58,28 @@ Options:
 ```
 
 ## How to compile Skull with LSC
+
+Explicitly name the output
 ```bash
-lsc <filename.k> -o <output> // Explicitly name the output
-lsc <filename.k> // Implicitly becomes main
-lsc <filename.k> -k // Keeps .o and .asm file from being deleted, this allows me to debug and you to see the inner workings :D
-lsc <filename.k> -o <output> -k // Combine them
-lsc <filename.k> -k -o <output> // Even like this
+lsc <filename.k> -o <output>
+```
+
+Implicitly becomes main
+```bash
+lsc <filename.k>
+```
+
+Keeps .o and .asm file from being deleted, this allows me to debug and you to see the inner workings :D
+```bash
+lsc <filename.k> -k
+```
+
+Explicitly name the output AND keep files
+```bash
+lsc <filename.k> -o <output> -k
+```
+
+Or you can do it this way
+```bash
+lsc <filename.k> -k -o <output>
 ```
