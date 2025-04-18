@@ -1,6 +1,5 @@
 # Skull
-
-## Skull is a language with a suite
+Skull is a language that offers two things:  
 Graveyard: LSC Manager  
 LSC: Skull Lang Compiler  
 
