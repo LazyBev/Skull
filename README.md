@@ -33,18 +33,19 @@ Targets:
 ## How to compile LSC with Graveyard
 
 This line *Installs/Updates* **Graveyard**
-
+```bash
 graveyard resurrect
+```
 
 This line *compiles* **LSC**  
-##
-<tab><tab>code/graveyard lsc-compile
+```bash
+graveyard lsc-compile
+```
 
-
-If you want to *install* **LSC** systemwide  
-##
-<tab><tab>code/graveyard lsc-install
-
+If you want to *install* **LSC** systemwide
+```bash
+graveyard lsc-install
+```
 
 ## LSC Usage
 ```bash
