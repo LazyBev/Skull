@@ -1,0 +1,177 @@
+#!/bin/bash
+
+# Function to find the Skull directory
+find_skull_dir() {
+    local dir="$PWD"
+
+    # Check if current directory is Skull and has includes and src
+    if [ "$(basename "$dir")" = "Skull" ] && [ -d "$dir/includes" ] && [ -d "$dir/src" ]; then
+        echo ""
+        return 0
+    fi
+
+    # Otherwise, search parent directories
+    while [ "$dir" != "/" ]; do
+        if [ -d "$dir/Skull" ] && [ -d "$dir/Skull/includes" ] && [ -d "$dir/Skull/src" ]; then
+            echo "$dir/Skull"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+
+    echo "Error: Could Not Find Skull Directory" >&2
+    exit 1
+}
+
+if ! command -v gcc >/dev/null 2>&1; then
+    echo "Error: gcc is not installed. Installing gcc..." >&2
+    sudo pacman -Sy gcc
+    if ! command -v gcc >/dev/null 2>&1; then
+        echo "Error: Failed to install gcc" >&2
+        exit 1
+    fi
+fi
+
+# Find Skull directory
+SKULL_DIR=$(find_skull_dir) || { ""; }
+
+# Define paths and variables from Makefile
+EXEC="${SKULL_DIR:+$SKULL_DIR/}lsc"
+BUILD_DIR="${SKULL_DIR:+$SKULL_DIR/}build"
+BIN_DIR="${SKULL_DIR:+$SKULL_DIR/}bin"
+USER_BIN="/usr/bin"
+TARGET_DIR="${SKULL_DIR:+$SKULL_DIR/}target"
+SRC_DIR="${SKULL_DIR:+$SKULL_DIR/}src"
+INCLUDE_DIR="${SKULL_DIR:+$SKULL_DIR/}includes"
+
+# Compiler flags from Makefile
+IMPL_FLAGS="-DSKULL_LIST_H_IMPLEMENTATION -DSKULL_AST_H IMPLEMENTATION \
+ -DSKULL_TOKEN_H_IMPLEMENTATION -DSKULL_LEXER_H_IMPLEMENTATION \
+ -DSKULL_PARSER_H_IMPLEMENTATION -DSKULL_TYPES_H_IMPLEMENTATION \
+ -DSKULL_UTILS_H_IMPLEMENTATION -DSKULL_ASM_H_IMPLEMENTATION \
+ -DSKULL_H_IMPLEMENTATION"
+CFLAGS="-g -Wall -I$INCLUDE_DIR $IMPL_FLAGS"
+LDFLAGS="-lm -ldl -fPIC -rdynamic"
+
+# Define valid targets
+VALID_TARGETS="install uninstall reinstall usage"
+
+# Check for target argument
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 { $VALID_TARGETS }" >&2
+    exit 1
+fi
+
+TARGET="$1"
+
+# Validate target
+if ! echo "$VALID_TARGETS" | grep -qw "$TARGET"; then
+    echo "Error: Invalid target '$TARGET'. Valid targets are: $VALID_TARGETS" >&2
+    exit 1
+fi
+
+# Function to create directories
+create_dirs() {
+    mkdir -p "$TARGET_DIR" "$TARGET_DIR/$BUILD_DIR" "$TARGET_DIR/$BIN_DIR" || {
+        echo "Error: Failed to create directories" >&2
+        exit 1
+    }
+}
+
+# Function to compile source files
+compile_sources() {
+    # Find all .c files in src directory
+    SRCS=$(find "$SRC_DIR" -maxdepth 1 -name "*.c")
+    if [ -z "$SRCS" ]; then
+        echo "Error: No source files found in $SRC_DIR" >&2
+        exit 1
+    fi
+
+    # Compile each source file to object file
+    for src in $SRCS; do
+        obj="$TARGET_DIR/$BUILD_DIR/$(basename "${src%.c}.o")"
+        echo "Compiling $src to $obj..."
+        gcc $CFLAGS -c "$src" -o "$obj" || {
+            echo "Error: Compilation of $src failed" >&2
+            exit 1
+        }
+    done
+}
+
+# Function to link object files
+link_executable() {
+    # Find all object files
+    OBJS=$(find "$TARGET_DIR/$BUILD_DIR" -name "*.o")
+    if [ -z "$OBJS" ]; then
+        echo "Error: No object files found in $TARGET_DIR/$BUILD_DIR" >&2
+        exit 1
+    fi
+
+    echo "Linking $TARGET_DIR/$BIN_DIR/$EXEC..."
+    gcc $OBJS $LDFLAGS -o "$TARGET_DIR/$BIN_DIR/$EXEC" || {
+        echo "Error: Linking failed" >&2
+        exit 1
+    }
+}
+
+# Function to build (used by all, rebuild, install, reinstall)
+build() {
+    create_dirs
+    compile_sources
+    link_executable
+}
+
+# Handle targets
+case "$TARGET" in
+    install)
+        echo "Installing $EXEC..."
+        build
+        sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
+            echo "Error: Installation of $EXEC to $USER_BIN failed" >&2
+            exit 1
+        }
+        echo "[lsc_SUCCESS]: lsc Installed Successfully"
+        ;;
+    uninstall)
+        echo "Uninstalling $EXEC..."
+        rm -rf "$TARGET_DIR"
+        sudo rm -f "$USER_BIN/$EXEC" || {
+            echo "Error: Failed to remove $EXEC from $USER_BIN" >&2
+            exit 1
+        }
+        echo "[lsc_SUCCESS]: Uninstalled Successfully"
+        ;;
+    reinstall)
+        echo "Reinstalling $EXEC..."
+        echo "Cleaning $TARGET_DIR..."
+        rm -rf "$TARGET_DIR" || {
+            echo "Error: Clean failed" >&2
+            exit 1
+        }
+        echo "[lsc_SUCCESS]: Clean completed successfully"
+        sudo rm -f "$USER_BIN/$EXEC"
+        build
+        sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
+            echo "Error: Installation of $EXEC to $USER_BIN failed" >&2
+            exit 1
+        }
+        echo "[lsc_SUCCESS]: Reinstalled Successfully"
+        ;;
+    usage)
+        echo "Lazy's Skull Compiler (lsc) - Usage Information"
+        echo "---------------------------------------------"
+        echo "Usage: $0 { $VALID_TARGETS }"
+        echo ""
+        echo "Available Targets:"
+        echo "  install   : Build and install lsc to $USER_BIN"
+        echo "  uninstall : Remove build artifacts and lsc from $USER_BIN"
+        echo "  reinstall : Reinstall lsc"
+        echo "  usage     : Display this help message"
+        echo ""
+        exit 0
+        ;;
+    *)
+        echo "Usage: $0 { $VALID_TARGETS }"
+esac
+
+exit 0
