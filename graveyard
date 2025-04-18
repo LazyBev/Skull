@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # graveyard - Build and installation manager for LSC (Skull compiler)
-# Improved version with better error handling and logic that matches README.md definitions
+# Improved version with better error handling, flags, and directory preservation
 
 # Exit codes
 readonly E_SUCCESS=0
@@ -20,6 +20,7 @@ readonly BIN_DIR="bin"
 readonly TARGET_DIR="target"
 readonly SRC_DIR="src"
 readonly INCLUDE_DIR="includes"
+readonly LOG_FILE="log.grv"
 
 # Compiler flags
 readonly IMPL_FLAGS="-DSKULL_LIST_H_IMPLEMENTATION -DSKULL_AST_H_IMPLEMENTATION \
@@ -27,25 +28,161 @@ readonly IMPL_FLAGS="-DSKULL_LIST_H_IMPLEMENTATION -DSKULL_AST_H_IMPLEMENTATION 
  -DSKULL_PARSER_H_IMPLEMENTATION -DSKULL_TYPES_H_IMPLEMENTATION \
  -DSKULL_UTILS_H_IMPLEMENTATION -DSKULL_ASM_H_IMPLEMENTATION \
  -DSKULL_H_IMPLEMENTATION"
-readonly CFLAGS="-g -Wall -I$INCLUDE_DIR $IMPL_FLAGS"
-readonly LDFLAGS="-lm -ldl -fPIC -rdynamic"
 
 # All valid targets - updated to match README.md
-readonly VALID_TARGETS="diff resurrect lsc-compile lsc-remove lsc-recompile lsc-install lsc-uninstall lsc-reinstall usage"
+readonly VALID_TARGETS="diff resurrect lsc-compile lsc-remove lsc-recompile lsc-install lsc-uninstall lsc-reinstall clear-log usage"
+
+# Define color codes for terminal output
+readonly RED='\033[0;31m'    # Red for errors
+readonly GREEN='\033[0;32m'  # Green for success
+readonly BLUE='\033[0;34m'   # Blue for info 
+readonly YELLOW='\033[0;33m' # Yellow for warnings
+readonly NC='\033[0m'        # No Color - reset
+
+# Default flag values
+VERBOSE=0
+SUPER_QUIET=0
+NO_LOG=0
+NO_WARN=0
+
+#!/bin/bash
+
+# First, define SKULL_DIR at the top level
+SKULL_DIR=""
+ORIGINAL_DIR=$(pwd)
+
+# Then modify the navigate_to_skull_dir function
+navigate_to_skull_dir() {
+    # Only attempt to navigate if SKULL_DIR is set
+    if [ -n "$SKULL_DIR" ]; then
+        cd "$SKULL_DIR" || {
+            echo -e "\033[0;31m[Graveyard_ERROR]: Failed to change to Skull directory: $SKULL_DIR\033[0m" >&2
+            exit 1
+        }
+    fi
+}
+
+# And fix the return_to_original_dir function similarly
+return_to_original_dir() {
+    cd "$ORIGINAL_DIR" || {
+        echo -e "\033[0;31m[Graveyard_ERROR]: Failed to return to original directory: $ORIGINAL_DIR\033[0m" >&2
+        # Continue despite error
+    }
+}
 
 # Function to display error messages
 error() {
-    echo "[Graveyard_ERROR]: $1" >&2
+    # Errors are always displayed, regardless of quiet flags
+    local message="${RED}[Graveyard_ERROR]: $1${NC}"
+    echo -e "$message" >&2
+    
+    # Log errors unless NO_LOG is set
+    if [ $NO_LOG -eq 0 ]; then
+        navigate_to_skull_dir
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >> "$LOG_FILE"
+        return_to_original_dir
+    fi
 }
 
 # Function to display success messages
 success() {
-    echo "[Graveyard_SUCCESS]: $1"
+    # Success messages are shown unless SUPER_QUIET is set
+    if [ $SUPER_QUIET -eq 0 ]; then
+        local message="${GREEN}[Graveyard_SUCCESS]: $1${NC}"
+        echo -e "$message"
+    fi
+    
+    # Log success unless NO_LOG is set
+    if [ $NO_LOG -eq 0 ]; then
+        navigate_to_skull_dir
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" >> "$LOG_FILE"
+        return_to_original_dir
+    fi
 }
 
 # Function to display informational messages
 info() {
-    echo "$1"
+    # Info messages are not shown unless VERBOSE set
+    if [ $VERBOSE -eq 1 ]; then
+        local message="${BLUE}$1${NC}"
+        echo -e "$message"
+    fi
+    
+    # Log info unless NO_LOG is set
+    if [ $NO_LOG -eq 0 ]; then
+        navigate_to_skull_dir
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1" >> "$LOG_FILE"
+        return_to_original_dir
+    fi
+}
+
+# Function to display warning messages
+warning() {
+    # Warning messages are shown unless NO_WARN or SUPER_QUIET are set
+    if [ $NO_WARN -eq 0 ] && [ $SUPER_QUIET -eq 0 ]; then
+        local message="${YELLOW}[Graveyard_WARNING]: $1${NC}"
+        echo -e "$message" >&2
+    fi
+    
+    # Log warnings unless NO_LOG is set
+    if [ $NO_LOG -eq 0 ]; then
+        navigate_to_skull_dir
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >> "$SKULL_DIR/$LOG_FILE"
+        return_to_original_dir
+    fi
+}
+
+# Function to parse arguments
+parse_arguments() {
+    local args=("$@")
+    local found_target=0
+    TARGET=""
+    
+    # Loop through all arguments
+    for arg in "${args[@]}"; do
+        # Check if argument is a flag
+        if [[ "$arg" == -* ]]; then
+            case "$arg" in
+                -V)
+                    VERBOSE=1
+                    ;;
+                -Q)
+                    SUPER_QUIET=1
+                    ;;
+                --no-log)
+                    NO_LOG=1
+                    ;;
+                --no-warn)
+                    NO_WARN=1
+                    ;;
+                *)
+                    warning "Unknown flag: $arg"
+                    ;;
+            esac
+        else
+            # If not a flag, check if it's a valid target
+            if echo "$VALID_TARGETS" | grep -qw "$arg"; then
+                if [ $found_target -eq 0 ]; then
+                    TARGET="$arg"
+                    found_target=1
+                else
+                    warning "Multiple targets specified. Using first target: $TARGET, ignoring: $arg"
+                fi
+            else
+                warning "Invalid target or argument: $arg"
+            fi
+        fi
+    done
+    
+    # Check if we found a target
+    if [ $found_target -eq 0 ]; then
+        error "No valid target specified"
+        show_usage
+        exit $E_NO_TARGET
+    fi
+    
+    info "Target: $TARGET"
+    info "Flags: Verbose=$VERBOSE, SuperQuiet=$SUPER_QUIET, NoLog=$NO_LOG, NoWarn=$NO_WARN"
 }
 
 # Function to locate the Skull directory
@@ -75,26 +212,91 @@ find_skull_dir() {
 
 # Function to check if gcc is installed
 check_gcc() {
-    if ! command -v gcc >/dev/null 2>&1; then
-        info "gcc is not installed. Installing gcc..."
-        sudo pacman -Sy gcc || {
-            error "Failed to install gcc"
-            return 1
-        }
-        if ! command -v gcc >/dev/null 2>&1; then
-            error "Failed to install gcc"
-            return 1
-        fi
+    info "Checking for GCC compiler..."
+    
+    # Check if gcc is installed and get version
+    if command -v gcc >/dev/null 2>&1; then
+        local gcc_version
+        gcc_version=$(gcc --version | head -n1)
+        info "Found GCC: $gcc_version"
+        return 0
     fi
-    return 0
+    
+    # GCC not found, attempt to install it
+    warning "GCC compiler not found. Attempting to install..."
+    
+    # Track installation attempt
+    local installation_attempted=0
+    local installation_success=0
+    
+    # Detect package manager and install gcc
+    if command -v pacman >/dev/null 2>&1; then
+        info "Detected pacman package manager (Arch-based system)"
+        installation_attempted=1
+        sudo pacman -Sy --noconfirm gcc && installation_success=1
+    elif command -v apt >/dev/null 2>&1; then
+        info "Detected apt package manager (Debian/Ubuntu-based system)"
+        installation_attempted=1
+        sudo apt update && sudo apt install -y gcc && installation_success=1
+    elif command -v dnf >/dev/null 2>&1; then
+        info "Detected dnf package manager (Fedora/RHEL-based system)"
+        installation_attempted=1
+        sudo dnf install -y gcc && installation_success=1
+    elif command -v yum >/dev/null 2>&1; then
+        info "Detected yum package manager (CentOS/older RHEL-based system)"
+        installation_attempted=1
+        sudo yum install -y gcc && installation_success=1
+    elif command -v zypper >/dev/null 2>&1; then
+        info "Detected zypper package manager (openSUSE-based system)"
+        installation_attempted=1
+        sudo zypper install -y gcc && installation_success=1
+    elif command -v apk >/dev/null 2>&1; then
+        info "Detected apk package manager (Alpine Linux)"
+        installation_attempted=1
+        sudo apk add gcc build-base && installation_success=1
+    elif command -v brew >/dev/null 2>&1; then
+        info "Detected Homebrew package manager (macOS)"
+        installation_attempted=1
+        brew install gcc && installation_success=1
+    elif command -v port >/dev/null 2>&1; then
+        info "Detected MacPorts package manager (macOS)"
+        installation_attempted=1
+        sudo port install gcc && installation_success=1
+    fi
+    
+    # Check if installation was attempted
+    if [ $installation_attempted -eq 0 ]; then
+        error "Unable to detect package manager. Please install GCC manually and try again."
+        return 1
+    fi
+    
+    # Verify installation was successful
+    if [ $installation_success -eq 0 ]; then
+        error "Failed to install GCC using the detected package manager."
+        return 1
+    fi
+    
+    # Final verification
+    if command -v gcc >/dev/null 2>&1; then
+        local gcc_version
+        gcc_version=$(gcc --version | head -n1)
+        success "Successfully installed GCC: $gcc_version"
+        return 0
+    else
+        error "GCC installation appeared to succeed, but gcc command still not found."
+        error "Please install GCC manually and try again."
+        return 1
+    fi
 }
 
 # Function to create directories
 create_dirs() {
-    mkdir -p "$TARGET_DIR" "$TARGET_DIR/$BUILD_DIR" "$TARGET_DIR/$BIN_DIR" || {
+    navigate_to_skull_dir
+    mkdir -p "$TARGET_DIR" "$TARGET_DIR/$BUILD_DIR" "$SKULL_DIR/$TARGET_DIR/$BIN_DIR" || {
         error "Failed to create directories"
         return 1
     }
+    return_to_original_dir
     return 0
 }
 
@@ -102,9 +304,10 @@ create_dirs() {
 compile_sources() {
     # Find all .c files in src directory
     local SRCS
+    navigate_to_skull_dir
     SRCS=$(find "$SRC_DIR" -name "*.c" -type f)
     if [ -z "$SRCS" ]; then
-        error "No source files found in $SRC_DIR"
+        error "No source files found in $$SRC_DIR"
         return 1
     fi
 
@@ -113,11 +316,12 @@ compile_sources() {
         local obj
         obj="$TARGET_DIR/$BUILD_DIR/$(basename "${src%.c}.o")"
         info "Compiling $src to $obj..."
-        gcc $CFLAGS -c "$src" -o "$obj" || {
+        gcc -g -Wall -I"$INCLUDE_DIR" $IMPL_FLAGS -c "$src" -o "$obj" || {
             error "Compilation of $src failed"
             return 1
         }
     done
+    return_to_original_dir
     return 0
 }
 
@@ -125,6 +329,7 @@ compile_sources() {
 link_executable() {
     # Find all object files
     local OBJS
+    navigate_to_skull_dir
     OBJS=$(find "$TARGET_DIR/$BUILD_DIR" -name "*.o")
     if [ -z "$OBJS" ]; then
         error "No object files found in $TARGET_DIR/$BUILD_DIR"
@@ -132,10 +337,11 @@ link_executable() {
     fi
 
     info "Linking $TARGET_DIR/$BIN_DIR/$EXEC..."
-    gcc $OBJS $LDFLAGS -o "$TARGET_DIR/$BIN_DIR/$EXEC" || {
+    gcc $OBJS -lm -ldl -fPIC -rdynamic -o "$TARGET_DIR/$BIN_DIR/$EXEC" || {
         error "Linking failed"
         return 1
     }
+    return_to_original_dir
     return 0
 }
 
@@ -186,7 +392,7 @@ show_usage() { cat << EOF
                         graveyard - Usage Information                        
 -----------------------------------------------------------------------------
 
-Usage: graveyard <Target>
+Usage: graveyard <Target> [Flags]
 
 Targets:
                   diff          : Checks for any diffs in bytes between the Installed graveyard and the graveyard in the Skull dir
@@ -197,116 +403,63 @@ Targets:
                   lsc-install   : Compiles LSC and installs to /usr/bin
                   lsc-uninstall : Uninstalls LSC from /usr/bin
                   lsc-reinstall : Reinstalls LSC (Alternative: graveyard lsc-uninstall && graveyard lsc-install)
+                  clear-log     : Deletes the log file (log.grv)
                   usage         : Display this help message
+
+Flags:
+                  -V            : Verbose (Displays info messages)
+                  -Q            : Displays nothing at all except errors
+                  --no-log      : Doesnt echo the output to a file
+                  --no-warn     : Displays no warnings at all
+
+Note: Flags and target can be specified in any order.
 
 EOF
 }
 
-# Main function
-main() {
-    # Find the Skull directory
-    SKULL_DIR=$(find_skull_dir)
-    if [ -z "$SKULL_DIR" ]; then
-        error "Could not find a valid Skull directory with includes and src subdirectories"
-        exit $E_GENERAL
-    fi
-    info "Found Skull directory at: $SKULL_DIR"
-    
-    # Check for gcc
-    check_gcc || exit $E_MISSING_DEPS
-    
-    # Check for target argument
-    if [ $# -eq 0 ]; then
-        info "No Targets Provided, Try graveyard usage..."
-        exit $E_NO_TARGET
-    fi
-
-    # Get target and validate
-    TARGET="$1"
-    if ! echo "$VALID_TARGETS" | grep -qw "$TARGET"; then
-        error "Invalid target '$TARGET'. Valid targets are: $VALID_TARGETS"
-        show_usage
-        exit $E_INVALID_TARGET
-    fi
-
-    # Handle targets
-    cd "$SKULL_DIR" || {
-        error "Failed to change to Skull directory"
-        exit $E_GENERAL
-    }
+# Handler for lsc targets to preserve directory
+handle_lsc_target() {
+    # Navigate to Skull directory before running lsc commands
+    navigate_to_skull_dir
     
     case "$TARGET" in
-        diff)
-            if [ -f "$USER_BIN/graveyard" ] && [ -f "$SKULL_DIR/graveyard" ]; then
-                info "Checking Requirements: [Are Filesizes Different]..."
-                if files_are_different "$USER_BIN/graveyard" "$SKULL_DIR/graveyard"; then
-                    info "Met Requirements: [Filesizes Are Different]!"
-                else
-                    info "Unmet Requirements: [Filesizes Are Not Different]!"
-                    exit $E_SUCCESS
-                fi
-            else
-                if [ ! -f "$USER_BIN/graveyard" ]; then
-                    info "graveyard file not found in $USER_BIN"
-                fi
-                if [ ! -f "$SKULL_DIR/graveyard" ]; then
-                    error "graveyard file not found in $SKULL_DIR"
-                fi
-                exit $E_GENERAL
-            fi
-            ;;
-        resurrect)
-            if [ -f "$USER_BIN/graveyard" ] && [ -f "$SKULL_DIR/graveyard" ]; then
-                info "Checking Requirements: [Are Filesizes Different]..."
-                if files_are_different "$USER_BIN/graveyard" "$SKULL_DIR/graveyard"; then
-                    info "Met Requirements: [Filesizes Are Different]!"
-                    info "Updating graveyard..."
-                    sudo cp -f "$SKULL_DIR/graveyard" "$USER_BIN/" || {
-                        error "Failed to update graveyard"
-                        exit $E_INSTALL_FAIL
-                    }
-                    success "graveyard Updated Successfully"
-                else
-                    info "Unmet Requirements: [Filesizes Are Not Different]!"
-                    info "No update needed..."
-                fi
-            else
-                if [ -f "$SKULL_DIR/graveyard" ] && [ ! -f "$USER_BIN/graveyard" ]; then
-                    info "Installing graveyard for the first time..."
-                    sudo cp -f "$SKULL_DIR/graveyard" "$USER_BIN/" || {
-                        error "Failed to install graveyard"
-                        exit $E_INSTALL_FAIL
-                    }
-                    success "graveyard Installed Successfully"
-                else
-                    error "graveyard file not found in $SKULL_DIR"
-                    exit $E_GENERAL
-                fi
-            fi
-            ;;
         lsc-compile)
             info "Compiling $EXEC..."
-            build || exit $E_COMPILE_FAIL
+            build || { 
+                error "Compilation failed"
+                return $E_COMPILE_FAIL
+            }
             success "$EXEC Compiled Successfully"
             ;;
         lsc-remove)
             info "Removing $EXEC build artifacts..."
-            rm -rf "$TARGET_DIR" 2>/dev/null
+            rm -rf "$TARGET_DIR" 2>/dev/null || {
+                error "Failed to remove build artifacts"
+                return $E_GENERAL
+            }
             success "Build artifacts removed successfully"
             ;;
         lsc-recompile)
             info "Recompiling $EXEC..."
             info "Cleaning $TARGET_DIR..."
-            rm -rf "$TARGET_DIR" 2>/dev/null
-            build || exit $E_COMPILE_FAIL
+            rm -rf "$TARGET_DIR" 2>/dev/null || {
+                warning "Failed to clean target directory"
+            }
+            build || {
+                error "Recompilation failed"
+                return $E_COMPILE_FAIL
+            }
             success "Recompiled Successfully"
             ;;
         lsc-install)
-            build || exit $E_COMPILE_FAIL
+            build || {
+                error "Build failed during installation"
+                return $E_COMPILE_FAIL
+            }
             info "Installing $EXEC..."
             sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
                 error "Installation of $EXEC to $USER_BIN failed"
-                exit $E_INSTALL_FAIL
+                return $E_INSTALL_FAIL
             }
             success "$EXEC Installed Successfully"
             ;;
@@ -315,11 +468,11 @@ main() {
             if [ -f "$USER_BIN/$EXEC" ]; then
                 sudo rm -f "$USER_BIN/$EXEC" || {
                     error "Failed to remove $EXEC from $USER_BIN"
-                    exit $E_GENERAL
+                    return $E_GENERAL
                 }
                 success "$EXEC uninstalled successfully from $USER_BIN"
             else
-                info "$EXEC not found in $USER_BIN, nothing to uninstall"
+                warning "$EXEC not found in $USER_BIN, nothing to uninstall"
             fi
             ;;
         lsc-reinstall)
@@ -328,25 +481,129 @@ main() {
             if [ -f "$USER_BIN/$EXEC" ]; then
                 sudo rm -f "$USER_BIN/$EXEC" || {
                     error "Failed to remove $EXEC from $USER_BIN during reinstall"
-                    exit $E_GENERAL
+                    return $E_GENERAL
                 }
             fi
             # Clean build artifacts
-            rm -rf "$TARGET_DIR" 2>/dev/null
+            rm -rf "$TARGET_DIR" 2>/dev/null || {
+                warning "Failed to clean target directory during reinstall"
+            }
             # Then build and install
-            build || exit $E_COMPILE_FAIL
+            build || {
+                error "Build failed during reinstallation"
+                return $E_COMPILE_FAIL
+            }
             sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
                 error "Installation of $EXEC to $USER_BIN failed"
-                exit $E_INSTALL_FAIL
+                return $E_INSTALL_FAIL
             }
             success "$EXEC Reinstalled Successfully"
             ;;
-        usage)
-            show_usage
-            ;;
     esac
+    return_to_original_dir
+    return $E_SUCCESS
+}
 
-    exit $E_SUCCESS
+# Main function
+main() {
+    # Check for arguments
+    if [ $# -eq 0 ]; then
+        error "No arguments provided, Try graveyard usage..."
+        show_usage
+        exit $E_NO_TARGET
+    fi
+
+    # Parse all arguments
+    parse_arguments "$@"
+    
+    # Find the Skull directory
+    SKULL_DIR=$(find_skull_dir)
+    if [ -z "$SKULL_DIR" ]; then
+        error "Could not find a valid Skull directory with includes and src subdirectories"
+        exit $E_GENERAL
+    fi
+    
+    info "Found Skull directory at: $SKULL_DIR"
+    
+    # Check for gcc
+    check_gcc || exit $E_MISSING_DEPS
+
+    # Handle targets
+    local result=$E_SUCCESS
+    
+    # Handle lsc* targets differently to preserve directory
+    if [[ "$TARGET" == lsc-* ]]; then
+        handle_lsc_target
+        result=$?
+    else     
+        # Execute the target
+        case "$TARGET" in
+            diff)
+                navigate_to_skull_dir
+                if [ -f "$USER_BIN/graveyard" ] && [ -f "graveyard" ]; then
+                    info "Checking Requirements: [Are Filesizes Different]..."
+                    if files_are_different "$USER_BIN/graveyard" "graveyard"; then
+                        success "Met Requirements: [Filesizes Are Different]!"
+                    else
+                        warning "Unmet Requirements: [Filesizes Are Not Different]!"
+                    fi
+                else
+                    if [ ! -f "$USER_BIN/graveyard" ]; then
+                        warning "graveyard file not found in $USER_BIN"
+                    fi
+                    if [ ! -f "graveyard" ]; then
+                        warning "graveyard file not found in $(pwd)"
+                    fi
+                    result=$E_GENERAL
+                fi
+                navigate_to_skull_dir
+                ;;
+            resurrect)
+                navigate_to_skull_dir
+                if [ -f "$USER_BIN/graveyard" ] && [ -f "graveyard" ]; then
+                    info "Updating graveyard..."
+                    sudo cp -f "graveyard" "$USER_BIN/" || {
+                        error "Failed to update graveyard"
+                        result=$E_INSTALL_FAIL
+                    }
+                    success "Graveyard Updated Successfully"
+                else
+                    if [ -f "graveyard" ] && [ ! -f "$USER_BIN/graveyard" ]; then
+                        info "Installing graveyard systemwide..."
+                        sudo cp -f "graveyard" "$USER_BIN/" || {
+                            error "Failed to install graveyard"
+                            result=$E_INSTALL_FAIL
+                        }
+                        success "Graveyard Installed Successfully"
+                    else
+                        error "Graveyard file not found in $(pwd))"
+                        result=$E_GENERAL
+                    fi
+                fi
+                ;;
+            clear-log)
+                navigate_to_skull_dir
+                info "Clearing log file..."
+                if [ -f "$LOG_FILE" ]; then
+                    rm -f "$LOG_FILE" || {
+                        error "Failed to remove log file"
+                        result=$E_GENERAL
+                    }
+                    success "Log file cleared successfully"
+                else
+                    warning "No log file found at $LOG_FILE"
+                fi
+                return_to_original_dir
+                ;;
+            usage)
+                show_usage
+                ;;
+        esac
+    fi
+
+    return_to_original_dir
+
+    exit $result
 }
 
 # Call the main function with all script arguments
