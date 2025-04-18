@@ -34,16 +34,16 @@ Targets:
 
 This line *Installs/Updates* **Graveyard**  
 ##
-graveyard resurrect
+<tab><tab>code/graveyard resurrect
 
 This line *compiles* **LSC**  
 ##
-graveyard lsc-compile
+<tab><tab>code/graveyard lsc-compile
 
 
 If you want to *install* **LSC** systemwide  
 ##
-graveyard lsc-install
+<tab><tab>code/graveyard lsc-install
 
 
 ## LSC Usage
