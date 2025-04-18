@@ -1,8 +1,8 @@
 # Skull
 Skull is a language with a suite:
 ```bash
-Graveyard: a LSC compiler
-LSC: Skull compiler
+Graveyard: LSC Manager
+LSC: Skull Lang Compiler
 ```
 
 ## LSC
