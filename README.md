@@ -1,13 +1,13 @@
 # Skull
 Skull is a language that offers two things:  
-**Graveyard**: LSC Manager  
-**LSC**: Skull Lang Compiler  
+**Graveyard**: *LSC Manager*  
+**LSC**: *Skull Lang Compiler*  
 
 ## LSC
-**LSC** stands for **Lazy's Skull Compiler**, it compiles skull files into x86_64 assembly.
+**LSC** stands for *Lazy's Skull Compiler*, it compiles skull files into x86_64 assembly.
 
 ## Graveyard
-**Graveyard** is a **LSC** compiler, but you can also with **Graveyard** install LSC to /usr/bin for systemwide use
+**Graveyard** is a **LSC** compiler, but you can also with **Graveyard** install **LSC** to /usr/bin for systemwide use
 
 # Usage
 
@@ -32,18 +32,17 @@ Targets:
 
 ## How to compile LSC with Graveyard
 
-Make sure to install for the first time for systemwide usage, or just use it from the Skull dir  
-Also important to run this command everytime you git pull this repo, I might have updated it  
+This line *Installs/Updates* **LSC**
 ```bash
 graveyard resurrect
 ```
 
-Compiles LSC
+This line *compiles* **LSC**
 ```bash
 graveyard lsc-compile
 ```
 
-If you want to install LSC systemwide
+If you want to *install* **LSC** systemwide
 ```bash
 graveyard lsc-install
 ```
