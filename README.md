@@ -32,9 +32,9 @@ Targets:
 
 ## How to compile LSC with Graveyard
 
-This line *Installs/Updates* **Graveyard**  
-##
-<tab><tab>code/graveyard resurrect
+This line *Installs/Updates* **Graveyard**
+
+graveyard resurrect
 
 This line *compiles* **LSC**  
 ##
