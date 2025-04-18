@@ -1,9 +1,9 @@
 # Skull
 
-## How to install Skull
+### How to install Skull
 Use Graveyard to install lsc (Lazy's Skull Compiler)
 
-## Gravyard usage
+### Gravyard usage
 ```
 Lazy's Skull Compiler (lsc) - Usage Information
 ---------------------------------------------
