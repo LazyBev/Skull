@@ -1,5 +1,9 @@
 # Skull
-A programming language that uses LSC to compile, and Graveyard to compile LSC
+Skull is a language with a suite:
+```bash
+Graveyard: a LSC compiler
+LSC: Skull compiler
+```
 
 ## LSC
 LSC stands for Lazy's Skull Compiler, it compiles skull files into x86_64 assembly.
