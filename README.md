@@ -1,5 +1,4 @@
 # Skull
-## What is Skull
 A programming language that compiles to x86_64 assembly (Written in C)
 
 # How to install Skull
