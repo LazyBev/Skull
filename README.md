@@ -11,7 +11,7 @@ Use Graveyard to compile LSC
 Graveyard is a LSC compiler, but you can also with Graveyard install LSC to /usr/bin for systemwide use
 
 ### Gravyard usage
-```
+```bash
                         Graveyard - Usage Information                        
 -----------------------------------------------------------------------------
 
