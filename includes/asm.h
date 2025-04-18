@@ -51,11 +51,17 @@ char* asm_f_variable(ast_t* ast) {
 }
 
 char* asm_f_call(ast_t* ast) {
+    char* s = calloc(1, sizeof(char));
     if (strcmp(ast->name, "return") == 0) {
-        
+        ast_t* first_arg = (ast_t*) ast->value->children->size ? ast->value->children->items[0] : (void*) 0;
+        const char* template = "mov $%d, \37 %%eax\nret\n";
+        char* ret_s = calloc(strlen(template) + 128, sizeof(char));
+        sprintf(ret_s, template, first_arg ? first_arg->int_value : 0);
+        s = realloc(s, (strlen(ret_s) + 1) * sizeof(char));
+        strcat(s, ret_s);
     }
 
-    return strdup("");
+    return s;
 }
 
 char* asm_f_int(ast_t* ast) {
