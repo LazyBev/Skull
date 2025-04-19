@@ -1,394 +1,420 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-# graveyard - Build and installation manager for LSC (Skull compiler)
-# Improved version with better error handling, flags, and directory preservation
+import os
+import sys
+import shutil
+import subprocess
+import datetime
+import argparse
+import filecmp
+from pathlib import Path
+from typing import Tuple, Optional, List
 
 # Exit codes
-readonly E_SUCCESS=0
-readonly E_GENERAL=1
-readonly E_NO_TARGET=2
-readonly E_INVALID_TARGET=3
-readonly E_MISSING_DEPS=4
-readonly E_COMPILE_FAIL=5
-readonly E_INSTALL_FAIL=6
+E_SUCCESS = 0
+E_GENERAL = 1
+E_NO_TARGET = 2
+E_INVALID_TARGET = 3
+E_MISSING_DEPS = 4
+E_COMPILE_FAIL = 5
+E_INSTALL_FAIL = 6
 
 # Define paths and variables
-readonly USER_BIN="/usr/bin"
-readonly EXEC="lsc"
-readonly BUILD_DIR="build"
-readonly BIN_DIR="bin"
-readonly TARGET_DIR="target"
-readonly SRC_DIR="src"
-readonly INCLUDE_DIR="includes"
-readonly LOG_FILE="log.grv"
+USER_BIN = "/usr/bin"
+EXEC = "lsc"
+BUILD_DIR = "build"
+BIN_DIR = "bin"
+TARGET_DIR = "target"
+SRC_DIR = "src"
+INCLUDE_DIR = "includes"
+log_file = "log.grv"
 
 # Compiler flags
-readonly IMPL_FLAGS="-DSKULL_LIST_H_IMPLEMENTATION -DSKULL_AST_H_IMPLEMENTATION \
- -DSKULL_TOKEN_H_IMPLEMENTATION -DSKULL_LEXER_H_IMPLEMENTATION \
- -DSKULL_PARSER_H_IMPLEMENTATION -DSKULL_TYPES_H_IMPLEMENTATION \
- -DSKULL_UTILS_H_IMPLEMENTATION -DSKULL_ASM_H_IMPLEMENTATION \
- -DSKULL_H_IMPLEMENTATION"
+IMPL_FLAGS = [
+    "-DSKULL_LIST_H_IMPLEMENTATION", "-DSKULL_AST_H_IMPLEMENTATION",
+    "-DSKULL_TOKEN_H_IMPLEMENTATION", "-DSKULL_LEXER_H_IMPLEMENTATION",
+    "-DSKULL_PARSER_H_IMPLEMENTATION", "-DSKULL_TYPES_H_IMPLEMENTATION",
+    "-DSKULL_UTILS_H_IMPLEMENTATION", "-DSKULL_ASM_H_IMPLEMENTATION",
+    "-DSKULL_H_IMPLEMENTATION"
+]
 
-# All valid targets - updated to match README.md
-readonly VALID_TARGETS="diff resurrect lsc-compile lsc-remove lsc-recompile lsc-install lsc-uninstall lsc-reinstall clear-log usage"
+# All valid targets
+VALID_TARGETS = [
+    "diff", "resurrect", "lsc-compile", "lsc-remove", "lsc-recompile",
+    "lsc-install", "lsc-uninstall", "lsc-reinstall", "clear-log", "usage"
+]
 
 # Define color codes for terminal output
-readonly RED='\033[0;31m'    # Red for errors
-readonly GREEN='\033[0;32m'  # Green for success
-readonly BLUE='\033[0;34m'   # Blue for info 
-readonly YELLOW='\033[0;33m' # Yellow for warnings
-readonly NC='\033[0m'        # No Color - reset
+RED = '\033[0;31m'
+GREEN = '\033[0;32m'
+BLUE = '\033[0;34m'
+YELLOW = '\033[0;33m'
+NC = '\033[0m'  # No Color - reset
 
-# Default flag values
-VERBOSE=0
-SUPER_QUIET=0
-NO_LOG=0
-NO_WARN=0
-
-#!/bin/bash
-
-# First, define SKULL_DIR at the top level
-SKULL_DIR=""
-ORIGINAL_DIR=$(pwd)
-
-# Then modify the navigate_to_skull_dir function
-navigate_to_skull_dir() {
-    # Only attempt to navigate if SKULL_DIR is set
-    if [ -n "$SKULL_DIR" ]; then
-        cd "$SKULL_DIR" || {
-            echo -e "\033[0;31m[Graveyard_ERROR]: Failed to change to Skull directory: $SKULL_DIR\033[0m" >&2
-            exit 1
-        }
-    fi
-}
-
-# And fix the return_to_original_dir function similarly
-return_to_original_dir() {
-    cd "$ORIGINAL_DIR" || {
-        echo -e "\033[0;31m[Graveyard_ERROR]: Failed to return to original directory: $ORIGINAL_DIR\033[0m" >&2
-        # Continue despite error
-    }
-}
-
-# Function to display error messages
-error() {
-    # Errors are always displayed, regardless of quiet flags
-    local message="${RED}[Graveyard_ERROR]: $1${NC}"
-    echo -e "$message" >&2
+class Graveyard:
+    def __init__(self, args):
+        # Initialize attributes first
+        self.skull_dir = None
+        self.original_dir = os.getcwd()
+        
+        # Find Skull directory before parsing arguments
+        self.skull_dir = self.find_skull_dir()
+        
+        # Now parse arguments (only once)
+        self.parse_arguments(args)
+        
+        if not self.skull_dir:
+            self.error("Could not find valid Skull directory")
+            sys.exit(E_GENERAL)
+            
+        self.info(f"Found Skull directory at: {self.skull_dir}")
+        
+        # Check for GCC
+        if not self.check_gcc():
+            sys.exit(E_MISSING_DEPS)
     
-    # Log errors unless NO_LOG is set
-    if [ $NO_LOG -eq 0 ]; then
-        navigate_to_skull_dir
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >> "$LOG_FILE"
-        return_to_original_dir
-    fi
-}
+    def log_message(self, level, message):
+        """Append a message to the log file"""
+        was_in_skull_dir = False
 
-# Function to display success messages
-success() {
-    # Success messages are shown unless SUPER_QUIET is set
-    if [ $SUPER_QUIET -eq 0 ]; then
-        local message="${GREEN}[Graveyard_SUCCESS]: $1${NC}"
-        echo -e "$message"
-    fi
-    
-    # Log success unless NO_LOG is set
-    if [ $NO_LOG -eq 0 ]; then
-        navigate_to_skull_dir
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" >> "$LOG_FILE"
-        return_to_original_dir
-    fi
-}
+        try:
+            log_file = os.path.expanduser("~/.graveyard/log.grv")
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            
+            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-# Function to display informational messages
-info() {
-    # Info messages are not shown unless VERBOSE set
-    if [ $VERBOSE -eq 1 ]; then
-        local message="${BLUE}$1${NC}"
-        echo -e "$message"
-    fi
-    
-    # Log info unless NO_LOG is set
-    if [ $NO_LOG -eq 0 ]; then
-        navigate_to_skull_dir
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1" >> "$LOG_FILE"
-        return_to_original_dir
-    fi
-}
+            with open(log_file, "a") as log:
+                log.write(f"[{timestamp}] {level}: {message}\n")
 
-# Function to display warning messages
-warning() {
-    # Warning messages are shown unless NO_WARN or SUPER_QUIET are set
-    if [ $NO_WARN -eq 0 ] && [ $SUPER_QUIET -eq 0 ]; then
-        local message="${YELLOW}[Graveyard_WARNING]: $1${NC}"
-        echo -e "$message" >&2
-    fi
-    
-    # Log warnings unless NO_LOG is set
-    if [ $NO_LOG -eq 0 ]; then
-        navigate_to_skull_dir
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >> "$SKULL_DIR/$LOG_FILE"
-        return_to_original_dir
-    fi
-}
+            # Restore directory if needed
+            if was_in_skull_dir:
+                self.return_to_original_dir()
+        except Exception as e:
+            if self.verbose:
+                print(f"{RED}[Graveyard_LOG_ERROR]: Could not write to log: {str(e)}{NC}", file=sys.stderr)
 
-# Function to parse arguments
-parse_arguments() {
-    local args=("$@")
-    local found_target=0
-    TARGET=""
-    
-    # Loop through all arguments
-    for arg in "${args[@]}"; do
-        # Check if argument is a flag
-        if [[ "$arg" == -* ]]; then
-            case "$arg" in
-                -V)
-                    VERBOSE=1
-                    ;;
-                -Q)
-                    SUPER_QUIET=1
-                    ;;
-                --no-log)
-                    NO_LOG=1
-                    ;;
-                --no-warn)
-                    NO_WARN=1
-                    ;;
-                *)
-                    warning "Unknown flag: $arg"
-                    ;;
-            esac
-        else
-            # If not a flag, check if it's a valid target
-            if echo "$VALID_TARGETS" | grep -qw "$arg"; then
-                if [ $found_target -eq 0 ]; then
-                    TARGET="$arg"
-                    found_target=1
-                else
-                    warning "Multiple targets specified. Using first target: $TARGET, ignoring: $arg"
-                fi
-            else
-                warning "Invalid target or argument: $arg"
-            fi
-        fi
-    done
-    
-    # Check if we found a target
-    if [ $found_target -eq 0 ]; then
-        error "No valid target specified"
-        show_usage
-        exit $E_NO_TARGET
-    fi
-    
-    info "Target: $TARGET"
-    info "Flags: Verbose=$VERBOSE, SuperQuiet=$SUPER_QUIET, NoLog=$NO_LOG, NoWarn=$NO_WARN"
-}
 
-# Function to locate the Skull directory
-find_skull_dir() {
-    local head_dir
-    head_dir="$(basename "$(pwd)")"
-    
-    if [ "$head_dir" = "Skull" ] && [ -d "includes" ] && [ -d "src" ]; then
-        pwd
-        return 0
-    else
+    def parse_arguments(self, args):
+        parser = argparse.ArgumentParser(description='Graveyard - Build and installation manager for LSC',
+                                         add_help=False)
+        parser.add_argument('target', nargs='?', help='Target to execute')
+        parser.add_argument('-V', action='store_true', help='Verbose (display info messages)')
+        parser.add_argument('-Q', action='store_true', help='Super quiet mode (display only errors)')
+        parser.add_argument('--no-log', action='store_true', help="Don't echo output to log file")
+        parser.add_argument('--no-warn', action='store_true', help="Don't display warnings")
+        
+        args, unknown = parser.parse_known_args(args)
+        
+        # Set flags
+        self.verbose = args.V
+        self.super_quiet = args.Q
+        self.no_log = args.no_log
+        self.no_warn = args.no_warn
+        
+        # Process target
+        if args.target and args.target in VALID_TARGETS:
+            self.target = args.target
+        else:
+            if args.target:
+                self.warning(f"Invalid target: {args.target}")
+            self.error("No valid target specified")
+            self.show_usage()
+            sys.exit(E_NO_TARGET)
+            
+        # Log parsed arguments
+        self.info(f"Target: {self.target}")
+        self.info(f"Flags: Verbose={self.verbose}, SuperQuiet={self.super_quiet}, "
+                  f"NoLog={self.no_log}, NoWarn={self.no_warn}")
+        
+        # Check for unknown arguments
+        for arg in unknown:
+            self.warning(f"Unknown argument: {arg}")
+
+    def navigate_to_skull_dir(self):
+        """Change to the Skull directory if it's set"""
+        if self.skull_dir:
+            try:
+                os.chdir(self.skull_dir)
+                return True
+            except Exception as e:
+                self.error(f"Failed to change to Skull directory: {self.skull_dir}. {str(e)}")
+                sys.exit(1)
+        return False
+
+    def return_to_original_dir(self):
+        """Return to the original directory"""
+        try:
+            os.chdir(self.original_dir)
+            return True
+        except Exception as e:
+            self.error(f"Failed to return to original directory: {self.original_dir}. {str(e)}")
+            return False
+
+    def error(self, message):
+        """Display and log error messages"""
+        # Errors are always displayed, regardless of quiet flags
+        print(f"{RED}[Graveyard_ERROR]: {message}{NC}", file=sys.stderr)
+        
+        # Log errors unless NO_LOG is set
+        if not self.no_log:
+            self.log_message("ERROR", message)
+
+    def success(self, message):
+        """Display and log success messages"""
+        # Success messages are shown unless SUPER_QUIET is set
+        if not self.super_quiet:
+            print(f"{GREEN}[Graveyard_SUCCESS]: {message}{NC}")
+        
+        # Log success unless NO_LOG is set
+        if not self.no_log:
+            self.log_message("SUCCESS", message)
+
+    def info(self, message):
+        """Display and log informational messages"""
+        # Info messages are not shown unless VERBOSE set
+        if self.verbose:
+            print(f"{BLUE}{message}{NC}")
+        
+        # Log info unless NO_LOG is set
+        if not self.no_log:
+            self.log_message("INFO", message)
+
+    def warning(self, message):
+        """Display and log warning messages"""
+        # Warning messages are shown unless NO_WARN or SUPER_QUIET are set
+        if not self.no_warn and not self.super_quiet:
+            print(f"{YELLOW}[Graveyard_WARNING]: {message}{NC}", file=sys.stderr)
+        
+        # Log warnings unless NO_LOG is set
+        if not self.no_log:
+            self.log_message("WARNING", message)
+
+    def find_skull_dir(self) -> Optional[str]:
+        """Locate the Skull directory"""
+        head_dir = os.path.basename(os.getcwd())
+        
+        # Check if we're already in the Skull directory
+        if head_dir == "Skull" and os.path.isdir("includes") and os.path.isdir("src"):
+            return os.getcwd()
+        
         # Find all Skull directories in HOME
-        local skull_dirs=()
-        mapfile -t skull_dirs < <(sudo find "$HOME" -name "Skull" -type d 2>/dev/null)
+        home = os.path.expanduser("~")
+        skull_dirs = []
+        try:
+            # Using subprocess for better error handling when using sudo
+            result = subprocess.run(
+                ["find", home, "-name", "Skull", "-type", "d"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                skull_dirs = result.stdout.strip().split('\n')
+                skull_dirs = [d for d in skull_dirs if d]  # Remove empty lines
+        except Exception as e:
+            self.warning(f"Error searching for Skull directories: {str(e)}")
         
         # Loop through found directories
-        for candidate in "${skull_dirs[@]}"; do
-            if [ -d "$candidate/includes" ] && [ -d "$candidate/src" ]; then
-                echo "$candidate"
-                return 0
-            fi
-        done
-    fi
-    
-    return 1
-}
+        for candidate in skull_dirs:
+            if os.path.isdir(os.path.join(candidate, "includes")) and os.path.isdir(os.path.join(candidate, "src")):
+                return candidate
+        
+        return None
 
-# Function to check if gcc is installed
-check_gcc() {
-    info "Checking for GCC compiler..."
-    
-    # Check if gcc is installed and get version
-    if command -v gcc >/dev/null 2>&1; then
-        local gcc_version
-        gcc_version=$(gcc --version | head -n1)
-        info "Found GCC: $gcc_version"
-        return 0
-    fi
-    
-    # GCC not found, attempt to install it
-    warning "GCC compiler not found. Attempting to install..."
-    
-    # Track installation attempt
-    local installation_attempted=0
-    local installation_success=0
-    
-    # Detect package manager and install gcc
-    if command -v pacman >/dev/null 2>&1; then
-        info "Detected pacman package manager (Arch-based system)"
-        installation_attempted=1
-        sudo pacman -Sy --noconfirm gcc && installation_success=1
-    elif command -v apt >/dev/null 2>&1; then
-        info "Detected apt package manager (Debian/Ubuntu-based system)"
-        installation_attempted=1
-        sudo apt update && sudo apt install -y gcc && installation_success=1
-    elif command -v dnf >/dev/null 2>&1; then
-        info "Detected dnf package manager (Fedora/RHEL-based system)"
-        installation_attempted=1
-        sudo dnf install -y gcc && installation_success=1
-    elif command -v yum >/dev/null 2>&1; then
-        info "Detected yum package manager (CentOS/older RHEL-based system)"
-        installation_attempted=1
-        sudo yum install -y gcc && installation_success=1
-    elif command -v zypper >/dev/null 2>&1; then
-        info "Detected zypper package manager (openSUSE-based system)"
-        installation_attempted=1
-        sudo zypper install -y gcc && installation_success=1
-    elif command -v apk >/dev/null 2>&1; then
-        info "Detected apk package manager (Alpine Linux)"
-        installation_attempted=1
-        sudo apk add gcc build-base && installation_success=1
-    elif command -v brew >/dev/null 2>&1; then
-        info "Detected Homebrew package manager (macOS)"
-        installation_attempted=1
-        brew install gcc && installation_success=1
-    elif command -v port >/dev/null 2>&1; then
-        info "Detected MacPorts package manager (macOS)"
-        installation_attempted=1
-        sudo port install gcc && installation_success=1
-    fi
-    
-    # Check if installation was attempted
-    if [ $installation_attempted -eq 0 ]; then
-        error "Unable to detect package manager. Please install GCC manually and try again."
-        return 1
-    fi
-    
-    # Verify installation was successful
-    if [ $installation_success -eq 0 ]; then
-        error "Failed to install GCC using the detected package manager."
-        return 1
-    fi
-    
-    # Final verification
-    if command -v gcc >/dev/null 2>&1; then
-        local gcc_version
-        gcc_version=$(gcc --version | head -n1)
-        success "Successfully installed GCC: $gcc_version"
-        return 0
-    else
-        error "GCC installation appeared to succeed, but gcc command still not found."
-        error "Please install GCC manually and try again."
-        return 1
-    fi
-}
-
-# Function to create directories
-create_dirs() {
-    navigate_to_skull_dir
-    mkdir -p "$TARGET_DIR" "$TARGET_DIR/$BUILD_DIR" "$SKULL_DIR/$TARGET_DIR/$BIN_DIR" || {
-        error "Failed to create directories"
-        return 1
-    }
-    return_to_original_dir
-    return 0
-}
-
-# Function to compile source files
-compile_sources() {
-    # Find all .c files in src directory
-    local SRCS
-    navigate_to_skull_dir
-    SRCS=$(find "$SRC_DIR" -name "*.c" -type f)
-    if [ -z "$SRCS" ]; then
-        error "No source files found in $$SRC_DIR"
-        return 1
-    fi
-
-    # Compile each source file to object file
-    for src in $SRCS; do
-        local obj
-        obj="$TARGET_DIR/$BUILD_DIR/$(basename "${src%.c}.o")"
-        info "Compiling $src to $obj..."
-        gcc -g -Wall -I"$INCLUDE_DIR" $IMPL_FLAGS -c "$src" -o "$obj" || {
-            error "Compilation of $src failed"
-            return 1
+    def check_gcc(self) -> bool:
+        """Check if gcc is installed, attempt to install if not"""
+        self.info("Checking for GCC compiler...")
+        
+        # Check if gcc is installed and get version
+        try:
+            result = subprocess.run(["gcc", "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.info(f"Found GCC: {result.stdout.splitlines()[0]}")
+                return True
+        except FileNotFoundError:
+            pass
+        
+        # GCC not found, attempt to install it
+        self.warning("GCC compiler not found. Attempting to install...")
+        
+        # Track installation attempt
+        installation_attempted = False
+        installation_success = False
+        
+        # Detect package manager and install gcc
+        package_managers = {
+            "pacman": ["sudo", "pacman", "-Sy", "--noconfirm", "gcc"],
+            "apt": ["sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "gcc"],
+            "dnf": ["sudo", "dnf", "install", "-y", "gcc"],
+            "yum": ["sudo", "yum", "install", "-y", "gcc"],
+            "zypper": ["sudo", "zypper", "install", "-y", "gcc"],
+            "apk": ["sudo", "apk", "add", "gcc", "build-base"],
+            "brew": ["brew", "install", "gcc"],
+            "port": ["sudo", "port", "install", "gcc"]
         }
-    done
-    return_to_original_dir
-    return 0
-}
+        
+        for pm, cmd in package_managers.items():
+            if shutil.which(pm):
+                self.info(f"Detected {pm} package manager")
+                installation_attempted = True
+                try:
+                    # For apt which needs multiple commands
+                    if pm == "apt":
+                        subprocess.run(["sudo", "apt", "update"], check=True)
+                        result = subprocess.run(["sudo", "apt", "install", "-y", "gcc"], check=True)
+                    else:
+                        result = subprocess.run(cmd, check=True)
+                    installation_success = True
+                    break
+                except subprocess.CalledProcessError:
+                    continue
+        
+        # Check if installation was attempted
+        if not installation_attempted:
+            self.error("Unable to detect package manager. Please install GCC manually and try again.")
+            return False
+        
+        # Verify installation was successful
+        if not installation_success:
+            self.error("Failed to install GCC using the detected package manager.")
+            return False
+        
+        # Final verification
+        try:
+            result = subprocess.run(["gcc", "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.success(f"Successfully installed GCC: {result.stdout.splitlines()[0]}")
+                return True
+            else:
+                self.error("GCC installation appeared to succeed, but gcc command still not found.")
+                self.error("Please install GCC manually and try again.")
+                return False
+        except FileNotFoundError:
+            self.error("GCC installation appeared to succeed, but gcc command still not found.")
+            self.error("Please install GCC manually and try again.")
+            return False
 
-# Function to link object files
-link_executable() {
-    # Find all object files
-    local OBJS
-    navigate_to_skull_dir
-    OBJS=$(find "$TARGET_DIR/$BUILD_DIR" -name "*.o")
-    if [ -z "$OBJS" ]; then
-        error "No object files found in $TARGET_DIR/$BUILD_DIR"
-        return 1
-    fi
+    def create_dirs(self) -> bool:
+        """Create required directories for build"""
+        self.navigate_to_skull_dir()
+        
+        try:
+            os.makedirs(os.path.join(TARGET_DIR, BUILD_DIR), exist_ok=True)
+            os.makedirs(os.path.join(TARGET_DIR, BIN_DIR), exist_ok=True)
+            self.return_to_original_dir()
+            return True
+        except Exception as e:
+            self.error(f"Failed to create directories: {str(e)}")
+            self.return_to_original_dir()
+            return False
 
-    info "Linking $TARGET_DIR/$BIN_DIR/$EXEC..."
-    gcc $OBJS -lm -ldl -fPIC -rdynamic -o "$TARGET_DIR/$BIN_DIR/$EXEC" || {
-        error "Linking failed"
-        return 1
-    }
-    return_to_original_dir
-    return 0
-}
+    def compile_sources(self) -> bool:
+        """Compile all source files"""
+        self.navigate_to_skull_dir()
+        
+        # Find all .c files in src directory
+        src_files = []
+        for root, _, files in os.walk(SRC_DIR):
+            for file in files:
+                if file.endswith(".c"):
+                    src_files.append(os.path.join(root, file))
+        
+        if not src_files:
+            self.error(f"No source files found in {SRC_DIR}")
+            self.return_to_original_dir()
+            return False
 
-# Function to build
-build() {
-    create_dirs || return $?
-    compile_sources || return $?
-    link_executable || return $?
-    return 0
-}
+        # Compile each source file to object file
+        for src in src_files:
+            obj = os.path.join(
+                TARGET_DIR, BUILD_DIR,
+                os.path.basename(src).replace(".c", ".o")
+            )
+            self.info(f"Compiling {src} to {obj}...")
+            
+            try:
+                cmd = ["gcc", "-g", "-Wall", f"-I{INCLUDE_DIR}"]
+                cmd.extend(IMPL_FLAGS)
+                cmd.extend(["-c", src, "-o", obj])
+                subprocess.run(cmd, check=True)
+            except subprocess.CalledProcessError:
+                self.error(f"Compilation of {src} failed")
+                self.return_to_original_dir()
+                return False
+        
+        self.return_to_original_dir()
+        return True
 
-# Function to compare two files
-files_are_different() {
-    local file1="$1"
-    local file2="$2"
-    local newer_file=""
-    
-    # Check if both files exist
-    if [ ! -f "$file1" ] || [ ! -f "$file2" ]; then
-        # If either file doesn't exist, consider them different
-        if [ ! -f "$file1" ]; then
-            newer_file="$file2"
-        else
-            newer_file="$file1"
-        fi
-        export NEWER_FILE="$newer_file"
-        return 0
-    fi
-    
-    # Compare files byte by byte using cmp
-    if cmp -s "$file1" "$file2"; then
-        export NEWER_FILE=""
-        return 1
-    else
-        # Determine which file is newer by comparing modification times
-        if [ "$file1" -nt "$file2" ]; then
-            newer_file="$file1"
-        else
-            newer_file="$file2"
-        fi
-        export NEWER_FILE="$newer_file"
-        return 0
-    fi
-}
+    def link_executable(self) -> bool:
+        """Link object files into executable"""
+        self.navigate_to_skull_dir()
+        
+        # Find all object files
+        obj_files = []
+        obj_dir = os.path.join(TARGET_DIR, BUILD_DIR)
+        for file in os.listdir(obj_dir):
+            if file.endswith(".o"):
+                obj_files.append(os.path.join(obj_dir, file))
+        
+        if not obj_files:
+            self.error(f"No object files found in {obj_dir}")
+            self.return_to_original_dir()
+            return False
 
-# Function to show usage
-show_usage() { cat << EOF
+        # Link the executable
+        self.info(f"Linking {TARGET_DIR}/{BIN_DIR}/{EXEC}...")
+        try:
+            cmd = ["gcc"]
+            cmd.extend(obj_files)
+            cmd.extend(["-lm", "-ldl", "-fPIC", "-rdynamic", "-o", 
+                       os.path.join(TARGET_DIR, BIN_DIR, EXEC)])
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError:
+            self.error("Linking failed")
+            self.return_to_original_dir()
+            return False
+        
+        self.return_to_original_dir()
+        return True
+
+    def build(self) -> bool:
+        """Build the project"""
+        if not self.create_dirs():
+            return False
+        if not self.compile_sources():
+            return False
+        if not self.link_executable():
+            return False
+        return True
+
+    def files_are_different(self, file1: str, file2: str) -> Tuple[bool, Optional[str]]:
+        """Check if two files are different and which is newer"""
+        # Check if both files exist
+        if not os.path.isfile(file1) and not os.path.isfile(file2):
+            return False, None  # Both files don't exist
+        
+        if not os.path.isfile(file1):
+            return True, file2  # Only file2 exists
+            
+        if not os.path.isfile(file2):
+            return True, file1  # Only file1 exists
+        
+        # Compare file contents
+        try:
+            if not filecmp.cmp(file1, file2):
+                # Determine which file is newer
+                if os.path.getmtime(file1) > os.path.getmtime(file2):
+                    return True, file1
+                else:
+                    return True, file2
+        except Exception as e:
+            self.warning(f"Error comparing files: {str(e)}")
+            return True, None  # Return different but unknown which is newer
+        
+        # Files are identical
+        return False, None
+
+    def show_usage(self):
+        """Display usage information"""
+        usage = f"""
                         graveyard - Usage Information                        
 -----------------------------------------------------------------------------
 
@@ -413,198 +439,320 @@ Flags:
                   --no-warn     : Displays no warnings at all
 
 Note: Flags and target can be specified in any order.
+"""
+        print(usage)
 
-EOF
-}
-
-# Handler for lsc targets to preserve directory
-handle_lsc_target() {
-    # Navigate to Skull directory before running lsc commands
-    navigate_to_skull_dir
-    
-    case "$TARGET" in
-        lsc-compile)
-            info "Compiling $EXEC..."
-            build || { 
-                error "Compilation failed"
-                return $E_COMPILE_FAIL
-            }
-            success "$EXEC Compiled Successfully"
-            ;;
-        lsc-remove)
-            info "Removing $EXEC build artifacts..."
-            rm -rf "$TARGET_DIR" 2>/dev/null || {
-                error "Failed to remove build artifacts"
-                return $E_GENERAL
-            }
-            success "Build artifacts removed successfully"
-            ;;
-        lsc-recompile)
-            info "Recompiling $EXEC..."
-            info "Cleaning $TARGET_DIR..."
-            rm -rf "$TARGET_DIR" 2>/dev/null || {
-                warning "Failed to clean target directory"
-            }
-            build || {
-                error "Recompilation failed"
-                return $E_COMPILE_FAIL
-            }
-            success "Recompiled Successfully"
-            ;;
-        lsc-install)
-            build || {
-                error "Build failed during installation"
-                return $E_COMPILE_FAIL
-            }
-            info "Installing $EXEC..."
-            sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
-                error "Installation of $EXEC to $USER_BIN failed"
-                return $E_INSTALL_FAIL
-            }
-            success "$EXEC Installed Successfully"
-            ;;
-        lsc-uninstall)
-            info "Uninstalling $EXEC from system..."
-            if [ -f "$USER_BIN/$EXEC" ]; then
-                sudo rm -f "$USER_BIN/$EXEC" || {
-                    error "Failed to remove $EXEC from $USER_BIN"
-                    return $E_GENERAL
-                }
-                success "$EXEC uninstalled successfully from $USER_BIN"
-            else
-                warning "$EXEC not found in $USER_BIN, nothing to uninstall"
-            fi
-            ;;
-        lsc-reinstall)
-            info "Reinstalling $EXEC..."
+    def handle_lsc_target(self) -> int:
+        """Handle LSC-related targets"""
+        self.navigate_to_skull_dir()
+        
+        if self.target == "lsc-compile":
+            self.info(f"Compiling {EXEC}...")
+            if not self.build():
+                self.error("Compilation failed")
+                self.return_to_original_dir()
+                return E_COMPILE_FAIL
+            self.success(f"{EXEC} Compiled Successfully")
+            
+        elif self.target == "lsc-remove":
+            self.info(f"Removing {EXEC} build artifacts...")
+            try:
+                shutil.rmtree(TARGET_DIR, ignore_errors=True)
+                self.success("Build artifacts removed successfully")
+            except Exception as e:
+                self.error(f"Failed to remove build artifacts: {str(e)}")
+                self.return_to_original_dir()
+                return E_GENERAL
+                
+        elif self.target == "lsc-recompile":
+            self.info(f"Recompiling {EXEC}...")
+            self.info(f"Cleaning {TARGET_DIR}...")
+            try:
+                shutil.rmtree(TARGET_DIR, ignore_errors=True)
+            except Exception as e:
+                self.warning(f"Failed to clean target directory: {str(e)}")
+            
+            if not self.build():
+                self.error("Recompilation failed")
+                self.return_to_original_dir()
+                return E_COMPILE_FAIL
+            self.success("Recompiled Successfully")
+            
+        elif self.target == "lsc-install":
+            if not self.build():
+                self.error("Build failed during installation")
+                self.return_to_original_dir()
+                return E_COMPILE_FAIL
+                
+            self.info(f"Installing {EXEC}...")
+            try:
+                src = os.path.join(TARGET_DIR, BIN_DIR, EXEC)
+                dst = os.path.join(USER_BIN, EXEC)
+                subprocess.run(["sudo", "cp", "-f", src, dst], check=True)
+                self.success(f"{EXEC} Installed Successfully")
+            except subprocess.CalledProcessError:
+                self.error(f"Installation of {EXEC} to {USER_BIN} failed")
+                self.return_to_original_dir()
+                return E_INSTALL_FAIL
+                
+        elif self.target == "lsc-uninstall":
+            self.info(f"Uninstalling {EXEC} from system...")
+            bin_path = os.path.join(USER_BIN, EXEC)
+            if os.path.isfile(bin_path):
+                try:
+                    subprocess.run(["sudo", "rm", "-f", bin_path], check=True)
+                    self.success(f"{EXEC} uninstalled successfully from {USER_BIN}")
+                except subprocess.CalledProcessError:
+                    self.error(f"Failed to remove {EXEC} from {USER_BIN}")
+                    self.return_to_original_dir()
+                    return E_GENERAL
+            else:
+                self.warning(f"{EXEC} not found in {USER_BIN}, nothing to uninstall")
+                
+        elif self.target == "lsc-reinstall":
+            self.info(f"Reinstalling {EXEC}...")
             # First uninstall
-            if [ -f "$USER_BIN/$EXEC" ]; then
-                sudo rm -f "$USER_BIN/$EXEC" || {
-                    error "Failed to remove $EXEC from $USER_BIN during reinstall"
-                    return $E_GENERAL
-                }
-            fi
+            bin_path = os.path.join(USER_BIN, EXEC)
+            if os.path.isfile(bin_path):
+                try:
+                    subprocess.run(["sudo", "rm", "-f", bin_path], check=True)
+                except subprocess.CalledProcessError:
+                    self.error(f"Failed to remove {EXEC} from {USER_BIN} during reinstall")
+                    self.return_to_original_dir()
+                    return E_GENERAL
+                    
             # Clean build artifacts
-            rm -rf "$TARGET_DIR" 2>/dev/null || {
-                warning "Failed to clean target directory during reinstall"
-            }
-            # Then build and install
-            build || {
-                error "Build failed during reinstallation"
-                return $E_COMPILE_FAIL
-            }
-            sudo cp -f "$TARGET_DIR/$BIN_DIR/$EXEC" "$USER_BIN/" || {
-                error "Installation of $EXEC to $USER_BIN failed"
-                return $E_INSTALL_FAIL
-            }
-            success "$EXEC Reinstalled Successfully"
-            ;;
-    esac
-    return_to_original_dir
-    return $E_SUCCESS
+            try:
+                shutil.rmtree(TARGET_DIR, ignore_errors=True)
+            except Exception as e:
+                self.warning(f"Failed to clean target directory during reinstall: {str(e)}")
+                
+            # Build and install
+            if not self.build():
+                self.error("Build failed during reinstallation")
+                self.return_to_original_dir()
+                return E_COMPILE_FAIL
+                
+            try:
+                src = os.path.join(TARGET_DIR, BIN_DIR, EXEC)
+                dst = os.path.join(USER_BIN, EXEC)
+                subprocess.run(["sudo", "cp", "-f", src, dst], check=True)
+                self.success(f"{EXEC} Reinstalled Successfully")
+            except subprocess.CalledProcessError:
+                self.error(f"Installation of {EXEC} to {USER_BIN} failed")
+                self.return_to_original_dir()
+                return E_INSTALL_FAIL
+                
+        self.return_to_original_dir()
+        return E_SUCCESS
+
+    def run(self) -> int:
+        """Execute the requested target"""
+        result = E_SUCCESS
+        
+        # Handle LSC targets separately
+        if self.target.startswith("lsc-"):
+            return self.handle_lsc_target()
+            
+        # Execute other targets
+        if self.target == "diff":
+            self.navigate_to_skull_dir()
+            user_bin_path = os.path.join(USER_BIN, "graveyard")
+            local_path = "graveyard"
+            
+            if os.path.isfile(user_bin_path) and os.path.isfile(local_path):
+                self.info("Checking Requirements: [Are Filesizes Different]...")
+                different, newer = self.files_are_different(user_bin_path, local_path)
+                if different:
+                    self.success("Met Requirements: [Filesizes Are Different]!")
+                else:
+                    self.warning("Unmet Requirements: [Filesizes Are Not Different]!")
+            else:
+                if not os.path.isfile(user_bin_path):
+                    self.warning(f"graveyard file not found in {USER_BIN}")
+                if not os.path.isfile(local_path):
+                    self.warning(f"graveyard file not found in {os.getcwd()}")
+                result = E_GENERAL
+            self.return_to_original_dir()  
+        elif self.target == "resurrect":
+            self.navigate_to_skull_dir()
+            user_bin_path = os.path.join(USER_BIN, "graveyard")
+            local_path = "graveyard"
+            
+            if os.path.isfile(user_bin_path) and os.path.isfile(local_path):
+                self.info("Updating graveyard...")
+                try:
+                    subprocess.run(["sudo", "cp", "-f", local_path, user_bin_path], check=True)
+                    self.info("Installing bash completion...")
+                    
+                    # Content for the completion script
+                    completion_content = """
+# Bash completion for graveyard
+_graveyard_completions()
+{
+    local cur prev opts targets flags
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    # List of all valid targets
+    targets="diff resurrect lsc-compile lsc-remove lsc-recompile lsc-install lsc-uninstall lsc-reinstall clear-log usage"
+    
+    # List of all valid flags
+    flags="--no-warn --no-log -Q -V"
+    
+    # If we're completing the first argument or a flag was provided first,
+    # suggest both targets and flags
+    if [[ ${COMP_CWORD} -eq 1 ]] || [[ ${COMP_WORDS[1]} == -* ]]; then
+        # If current word starts with a dash, suggest only flags
+        if [[ ${cur} == -* ]]; then
+            COMPREPLY=( $(compgen -W "${flags}" -- "${cur}") )
+        else
+            # Otherwise suggest both targets and flags
+            COMPREPLY=( $(compgen -W "${targets} ${flags}" -- "${cur}") )
+        fi
+        return 0
+    fi
+    
+    # For subsequent arguments, suggest only flags
+    # (if the user has already entered a target)
+    if [[ " ${COMP_WORDS[@]} " =~ " diff " || " ${COMP_WORDS[@]} " =~ " resurrect " || \\
+        " ${COMP_WORDS[@]} " =~ " lsc-compile " || " ${COMP_WORDS[@]} " =~ " lsc-remove " || \\
+        " ${COMP_WORDS[@]} " =~ " lsc-recompile " || " ${COMP_WORDS[@]} " =~ " lsc-install " || \\
+        " ${COMP_WORDS[@]} " =~ " lsc-uninstall " || " ${COMP_WORDS[@]} " =~ " lsc-reinstall " || \\
+        " ${COMP_WORDS[@]} " =~ " clear-log " || " ${COMP_WORDS[@]} " =~ " usage " ]]; then
+        
+        # If the current word starts with a dash, suggest flags
+        if [[ ${cur} == -* ]]; then
+            COMPREPLY=( $(compgen -W "${flags}" -- "${cur}") )
+        fi
+        return 0
+    fi
+    
+    return 0
 }
+# Register the completion function
+complete -F _graveyard_completions graveyard
+                """
+                    # Create .bash_completion.d directory if it doesn't exist
+                    user_home = os.path.expanduser("~")
+                    completion_dir = os.path.join(user_home, ".bash_completion.d")
+                    
+                    # Fix for the bash completion directory creation and permissions
+                    try:
+                        # Check if directory exists first
+                        if not os.path.isdir(completion_dir):
+                            # Create the directory
+                            os.makedirs(completion_dir, exist_ok=True)
+                        
+                        # Write completion script
+                        completion_path = os.path.join(completion_dir, "graveyard")
+                        with open(completion_path, "w") as f:
+                            f.write(completion_content)
+                        self.success(f"Bash completion script installed to {completion_path}")
+                    except PermissionError:
+                        # If permission denied, try with sudo
+                        try:
+                            # Use sudo to create the directory
+                            subprocess.run(["sudo", "mkdir", "-p", completion_dir], check=True)
+                            
+                            # Set proper ownership so user can write to it
+                            subprocess.run(["chmod", "755", completion_dir], check=True)
+                            subprocess.run(["sudo", "chown", f"{os.getenv('USER')}:", completion_dir], check=True)
+                            
+                            # Try writing again
+                            with open(completion_path, "w") as f:
+                                f.write(completion_content)
+                            self.success(f"Bash completion script installed to {completion_path}")
+                        except subprocess.CalledProcessError as e:
+                            self.error(f"Failed to create completion directory with sudo: {str(e)}")
+                            return False
+                    except Exception as e:
+                        self.error(f"Failed to write completion script: {str(e)}")
+                        return False
+                    
+                    # Update .bashrc if necessary
+                    bashrc_path = os.path.join(user_home, ".bashrc")
+                    bashrc_entry = '''
+# Source bash completion scripts from ~/.bash_completion.d
+if [ -d ~/.bash_completion.d ]; then
+    for file in ~/.bash_completion.d/*; do
+        source "$file"
+    done
+fi
+                '''
+                    try:
+                        # Check if the entry already exists in .bashrc
+                        with open(bashrc_path, "r") as f:
+                            bashrc_content = f.read()
+                        
+                        if "source ~/.bash_completion.d/" not in bashrc_content and ".bash_completion.d/*" not in bashrc_content:
+                            # Add the entry to .bashrc
+                            with open(bashrc_path, "a") as f:
+                                f.write(bashrc_entry)
+                            self.success(f"Updated {bashrc_path} to load completions")
+                        else:
+                            self.info(f"Completion loading already configured in {bashrc_path}")
+                    except Exception as e:
+                        self.warning(f"Failed to update .bashrc: {str(e)}")
+                        self.warning("You may need to manually add the following to your .bashrc:")
+                        self.warning(bashrc_entry)
+                    
+                    self.info("For immediate use, run: source ~/.bash_completion.d/graveyard")
+                    self.success("Graveyard Updated Successfully")
+                except subprocess.CalledProcessError:
+                    self.error("Failed to update graveyard")
+                    self.return_to_original_dir()
+                    return E_INSTALL_FAIL
+            else:
+                if os.path.isfile(local_path) and not os.path.isfile(user_bin_path):
+                    self.info("Installing graveyard systemwide...")
+                    try:
+                        subprocess.run(["sudo", "cp", "-f", local_path, user_bin_path], check=True)
+                        self.success("Graveyard Installed Successfully")
+                    except subprocess.CalledProcessError:
+                        self.error("Failed to install graveyard")
+                        self.return_to_original_dir()
+                        return E_INSTALL_FAIL
+                else:
+                    self.error(f"Graveyard file not found in {os.getcwd()}")
+                    result = E_GENERAL
+            self.return_to_original_dir()
+            
+        elif self.target == "clear-log":
+            self.navigate_to_skull_dir()
+            self.info("Clearing log file...")
+            if os.path.isfile(log_file):
+                try:
+                    os.remove(log_file)
+                    self.success("Log file cleared successfully")
+                except Exception as e:
+                    self.error(f"Failed to remove log file: {str(e)}")
+                    self.return_to_original_dir()
+                    return E_GENERAL
+            else:
+                self.warning(f"No log file found at {log_file}")
+            self.return_to_original_dir()
+            
+        elif self.target == "usage":
+            self.show_usage()
+            
+        return result
 
-# Main function
-main() {
-    # Check for arguments
-    if [ $# -eq 0 ]; then
-        error "No arguments provided, Try graveyard usage..."
-        show_usage
-        exit $E_NO_TARGET
-    fi
 
-    # Parse all arguments
-    parse_arguments "$@"
-    
-    # Find the Skull directory
-    SKULL_DIR=$(find_skull_dir)
-    if [ -z "$SKULL_DIR" ]; then
-        error "Could not find a valid Skull directory with includes and src subdirectories"
-        exit $E_GENERAL
-    fi
-    
-    info "Found Skull directory at: $SKULL_DIR"
-    
-    # Check for gcc
-    check_gcc || exit $E_MISSING_DEPS
+def main():
+    # Create graveyard instance and run requested target
+    try:
+        graveyard = Graveyard(sys.argv[1:])
+        result = graveyard.run()
+        sys.exit(result)
+    except KeyboardInterrupt:
+        print("\nOperation interrupted by user.")
+        sys.exit(E_GENERAL)
+    except Exception as e:
+        print(f"{RED}[Graveyard_ERROR]: Unhandled exception: {str(e)}{NC}", file=sys.stderr)
+        sys.exit(E_GENERAL)
 
-    # Handle targets
-    local result=$E_SUCCESS
-    
-    # Handle lsc* targets differently to preserve directory
-    if [[ "$TARGET" == lsc-* ]]; then
-        handle_lsc_target
-        result=$?
-    else     
-        # Execute the target
-        case "$TARGET" in
-            diff)
-                navigate_to_skull_dir
-                if [ -f "$USER_BIN/graveyard" ] && [ -f "graveyard" ]; then
-                    info "Checking Requirements: [Are Filesizes Different]..."
-                    if files_are_different "$USER_BIN/graveyard" "graveyard"; then
-                        success "Met Requirements: [Filesizes Are Different]!"
-                    else
-                        warning "Unmet Requirements: [Filesizes Are Not Different]!"
-                    fi
-                else
-                    if [ ! -f "$USER_BIN/graveyard" ]; then
-                        warning "graveyard file not found in $USER_BIN"
-                    fi
-                    if [ ! -f "graveyard" ]; then
-                        warning "graveyard file not found in $(pwd)"
-                    fi
-                    result=$E_GENERAL
-                fi
-                navigate_to_skull_dir
-                ;;
-            resurrect)
-                navigate_to_skull_dir
-                if [ -f "$USER_BIN/graveyard" ] && [ -f "graveyard" ]; then
-                    info "Updating graveyard..."
-                    sudo cp -f "graveyard" "$USER_BIN/" || {
-                        error "Failed to update graveyard"
-                        result=$E_INSTALL_FAIL
-                    }
-                    success "Graveyard Updated Successfully"
-                else
-                    if [ -f "graveyard" ] && [ ! -f "$USER_BIN/graveyard" ]; then
-                        info "Installing graveyard systemwide..."
-                        sudo cp -f "graveyard" "$USER_BIN/" || {
-                            error "Failed to install graveyard"
-                            result=$E_INSTALL_FAIL
-                        }
-                        success "Graveyard Installed Successfully"
-                    else
-                        error "Graveyard file not found in $(pwd))"
-                        result=$E_GENERAL
-                    fi
-                fi
-                ;;
-            clear-log)
-                navigate_to_skull_dir
-                info "Clearing log file..."
-                if [ -f "$LOG_FILE" ]; then
-                    rm -f "$LOG_FILE" || {
-                        error "Failed to remove log file"
-                        result=$E_GENERAL
-                    }
-                    success "Log file cleared successfully"
-                else
-                    warning "No log file found at $LOG_FILE"
-                fi
-                return_to_original_dir
-                ;;
-            usage)
-                show_usage
-                ;;
-        esac
-    fi
 
-    return_to_original_dir
-
-    exit $result
-}
-
-# Call the main function with all script arguments
-main "$@"
+if __name__ == "__main__":
+    main()
